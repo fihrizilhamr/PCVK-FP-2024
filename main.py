@@ -66,19 +66,23 @@ def get_car_id(license_plate, vehicle_track_ids):
     return -1, -1, -1, -1, -1
 
 def find_matching_detection(vehicles, tracked_bbox, vehicle_detections):
-    # Create a dictionary for quick lookups
-    bbox_map = {
-        (round(x1, 3), round(y1, 3), round(x2, 3), round(y2, 3)): int(class_id)
-        for x1, y1, x2, y2, _, class_id in vehicle_detections
-    }
+    # Convert to numpy arrays for vectorized comparisons
+    tracked_bbox = np.array(tracked_bbox[:4])
+    detections = np.array([d[:4] for d in vehicle_detections])
     
-    # Round the tracked_bbox to the same precision
-    key = tuple(round(coord, 3) for coord in tracked_bbox[:4])
     
-    # Check if the tracked_bbox exists in the dictionary
-    class_id = bbox_map.get(key)
-    if class_id is not None:
-        return vehicles.get(class_id, "unknown")
+    # Find rows that match the tracked_bbox
+    matches = np.all(np.abs(detections - tracked_bbox) <= 8, axis=1)
+    if np.sum(matches) > 2:
+        print(tracked_bbox)
+        print(detections)
+        print(matches)
+    
+    # If a match is found, return the corresponding vehicle type
+    if np.any(matches):
+        matched_index = np.argmax(matches)  # Get the index of the first match
+        class_id = int(vehicle_detections[matched_index][5])
+        return vehicles.get(class_id)
     
     return "unknown"
 
