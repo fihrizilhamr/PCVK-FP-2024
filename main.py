@@ -13,18 +13,24 @@ from scipy.interpolate import interp1d
 from sort.sort import *
 from ultralytics import YOLO
 
+char_to_int = { 'O': '0',
+                'I': '1',
+                'J': '3',
+                'A': '4',
+                'G': '6',
+                'S': '5'}
 
-
-
-
+int_to_char = { '0': 'O',
+                '1': 'I',
+                '3': 'J',
+                '4': 'A',
+                '6': 'G',
+                '5': 'S'}
 
 
 def draw_border(img, top_left, bottom_right, color=(0, 255, 0), thickness=10):
     cv2.rectangle(img, top_left, bottom_right, color, thickness)
     return img
-
-
-
 
 
 def make_parser():
@@ -90,6 +96,84 @@ def find_matching_detection(vehicles, tracked_bbox, vehicle_detections):
 import logging
 logging.getLogger('ultralytics').setLevel(logging.ERROR)
 
+def licenseFormatCheck(text):
+    # plat nomer memiiki 7 karakter
+    if len(text) != 7:
+        return False
+
+    # cek apakah karakter sesuai dengan format
+    if (text[0] in string.ascii_uppercase or text[0] in int_to_char.keys()) and \
+       (text[1] in string.ascii_uppercase or text[1] in int_to_char.keys()) and \
+       (text[2] in ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'] or text[2] in char_to_int.keys()) and \
+       (text[3] in ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'] or text[3] in char_to_int.keys()) and \
+       (text[4] in string.ascii_uppercase or text[4] in int_to_char.keys()) and \
+       (text[5] in string.ascii_uppercase or text[5] in int_to_char.keys()) and \
+       (text[6] in string.ascii_uppercase or text[6] in int_to_char.keys()):
+        return True
+    else:
+        return False
+
+
+def formatLicense(text):
+    # format plat nomor agar sesuai dengan menkonversi karakter
+    license_plate_ = ''
+    mapping = {0: int_to_char, 1: int_to_char, 4: int_to_char, 5: int_to_char, 6: int_to_char,
+               2: char_to_int, 3: char_to_int}
+    for j in [0, 1, 2, 3, 4, 5, 6]:
+        if text[j] in mapping[j].keys():
+            license_plate_ += mapping[j][text[j]]
+        else:
+            license_plate_ += text[j]
+
+    return license_plate_
+
+
+def readLicensePlateString(license_plate_crop_img):
+    # membaca string plat nomor menggunakan OCR
+    reader = easyocr.Reader(['en'], gpu=False)
+    detections = reader.readtext(license_plate_crop_img)
+
+    for detection in detections:
+        bbox, text, score = detection
+
+        text = text.upper().replace(' ', '')
+
+        if licenseFormatCheck(text):
+            return formatLicense(text), score
+
+    return None, None
+
+def saveToCSV(results, output_path):
+    # save hasil ke format CSV untuk visulaisasi
+    with open(output_path, 'w') as f:
+        f.write('{},{},{},{},{},{},{}\n'.format('frame', 'vehicle_id', 'car_bbox',
+                                                'license_plate_bbox', 'license_plate_bbox_score', 'license_number',
+                                                'license_number_score'))
+
+        for frame_nmr in results.keys():
+            for vehicle_id in results[frame_nmr].keys():
+                # print(results[frame_nmr][vehicle_id])
+                if 'vehicle' in results[frame_nmr][vehicle_id].keys() and \
+                   'license_plate' in results[frame_nmr][vehicle_id].keys() and \
+                   'text' in results[frame_nmr][vehicle_id]['license_plate'].keys():
+                    f.write('{},{},{},{},{},{},{}\n'.format(frame_nmr,
+                                                            vehicle_id,
+                                                            '[{} {} {} {}]'.format(
+                                                                results[frame_nmr][vehicle_id]['vehicle']['bbox'][0],
+                                                                results[frame_nmr][vehicle_id]['vehicle']['bbox'][1],
+                                                                results[frame_nmr][vehicle_id]['vehicle']['bbox'][2],
+                                                                results[frame_nmr][vehicle_id]['vehicle']['bbox'][3]),
+                                                            '[{} {} {} {}]'.format(
+                                                                results[frame_nmr][vehicle_id]['license_plate']['bbox'][0],
+                                                                results[frame_nmr][vehicle_id]['license_plate']['bbox'][1],
+                                                                results[frame_nmr][vehicle_id]['license_plate']['bbox'][2],
+                                                                results[frame_nmr][vehicle_id]['license_plate']['bbox'][3]),
+                                                            results[frame_nmr][vehicle_id]['license_plate']['bbox_score'],
+                                                            results[frame_nmr][vehicle_id]['license_plate']['text'],
+                                                            results[frame_nmr][vehicle_id]['license_plate']['text_score'])
+                            )
+        f.close()
+
 def detect_license(opt):
     results = {}
     vehicles_tracker = Sort()
@@ -152,15 +236,27 @@ def detect_license(opt):
                 # Draw bounding boxes
                 draw_border(frame, (int(x1), int(y1)), (int(x2), int(y2)), color=(255, 0, 0))
                 draw_border(frame, (int(vx1), int(vy1)), (int(vx2), int(vy2)), color=(0, 255, 0))
+                
+                # crop Licnese plate untuk process deteksi string
+                license_plate_crop = frame[int(y1):int(y2), int(x1): int(x2), :]
 
                 # Masukkan preprocess di sini
+                license_plate_crop_gray = cv2.cvtColor(license_plate_crop, cv2.COLOR_BGR2GRAY)
+                _, license_plate_crop_thresh = cv2.threshold(license_plate_crop_gray, 64, 255, cv2.THRESH_BINARY_INV)
 
+                # baca license plate number
+                license_plate_text, license_plate_text_score = readLicensePlateString(license_plate_crop_thresh)
+
+                
                 # Save results
-                results[frame_nmr][vehicle_id] = {
-                    "vehicle": {"bbox": [vx1, vy1, vx2, vy2], "type": vehicle_class},
-                    "license_plate": {"bbox": [x1, y1, x2, y2]}
-                }
-
+                # baca license plate
+                if license_plate_text is not None:
+                    results[frame_nmr][vehicle_id] = {'vehicle': {'bbox': [vx1, vy1, vx2, vy2], "type": vehicle_class},
+                                                  'license_plate': {'bbox': [x1, y1, x2, y2],
+                                                                    'text': license_plate_text,
+                                                                    'bbox_score': score,
+                                                                    'text_score': license_plate_text_score}}
+          
         # Write frame to video
         out.write(frame)
         frame_nmr += 1
@@ -169,11 +265,15 @@ def detect_license(opt):
     cap.release()
     out.release()
     print(f"Processed video saved to {opt.output}")
-    print(results)
-
-
+    return results
 
 if __name__ == '__main__':
     opt = make_parser().parse_args()
-    detect_license(opt)
+    result = detect_license(opt)
+
+    saveToCSV(result, './data.csv')
+
+    
+
+    
 
