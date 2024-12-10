@@ -7,7 +7,11 @@ import ast
 import pandas as pd
 import numpy as np
 import os
+import re
 
+
+
+from time import time, perf_counter
 from contextlib import redirect_stdout
 from scipy.interpolate import interp1d
 from sort.sort import *
@@ -42,7 +46,7 @@ def make_parser():
     parser.add_argument('--roi-conf', type=float, default=0.0, help='roi detection confidence threshold')
     parser.add_argument('--frame-limit', type=int, default=240, help='limit processed frames')
     parser.add_argument('--output', type=str, default='./output_sample.mp4', help='path to save output video')
-    
+    parser.add_argument('--output-data', type=str, default='./data.csv', help='path to save output data')
     return parser
 
 
@@ -92,38 +96,26 @@ def find_matching_detection(vehicles, tracked_bbox, vehicle_detections):
     
     return "unknown"
 
-
-import logging
-logging.getLogger('ultralytics').setLevel(logging.ERROR)
-
 def licenseFormatCheck(text):
-    # plat nomer memiiki 7 karakter
-    if len(text) != 7:
+    if not (len(text) <= 9):
         return False
-
-    # cek apakah karakter sesuai dengan format
-    if (text[0] in string.ascii_uppercase or text[0] in int_to_char.keys()) and \
-       (text[1] in string.ascii_uppercase or text[1] in int_to_char.keys()) and \
-       (text[2] in ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'] or text[2] in char_to_int.keys()) and \
-       (text[3] in ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'] or text[3] in char_to_int.keys()) and \
-       (text[4] in string.ascii_uppercase or text[4] in int_to_char.keys()) and \
-       (text[5] in string.ascii_uppercase or text[5] in int_to_char.keys()) and \
-       (text[6] in string.ascii_uppercase or text[6] in int_to_char.keys()):
-        return True
-    else:
-        return False
+    
+    # Regex untuk format plat nomor: 1-2 huruf, diikuti 1-4 angka, diikuti 1-3 huruf
+    pattern = r'^[A-Z]{1,2}\d{1,4}[A-Z]{1,3}$'
+    return bool(re.match(pattern, text))
 
 
 def formatLicense(text):
     # format plat nomor agar sesuai dengan menkonversi karakter
     license_plate_ = ''
-    mapping = {0: int_to_char, 1: int_to_char, 4: int_to_char, 5: int_to_char, 6: int_to_char,
-               2: char_to_int, 3: char_to_int}
-    for j in [0, 1, 2, 3, 4, 5, 6]:
-        if text[j] in mapping[j].keys():
-            license_plate_ += mapping[j][text[j]]
+    for char in text:
+        # Konversi karakter sesuai pemetaan
+        if char in int_to_char:
+            license_plate_ += int_to_char[char]
+        elif char in char_to_int:
+            license_plate_ += char_to_int[char]
         else:
-            license_plate_ += text[j]
+            license_plate_ += char  # Jika tidak ada dalam pemetaan, gunakan karakter asli
 
     return license_plate_
 
@@ -174,6 +166,10 @@ def saveToCSV(results, output_path):
                             )
         f.close()
 
+
+import logging
+logging.getLogger('ultralytics').setLevel(logging.ERROR)
+logging.getLogger('easyocr').setLevel(logging.ERROR)
 def detect_license(opt):
     results = {}
     vehicles_tracker = Sort()
@@ -198,9 +194,9 @@ def detect_license(opt):
 
     while cap.isOpened():
         ret, frame = cap.read()
-        if not ret or frame_nmr > opt.frame_limit:
+        if not ret or frame_nmr >= opt.frame_limit:
             break
-        
+
         results[frame_nmr] = {}
 
         # Detect vehicles
@@ -216,11 +212,9 @@ def detect_license(opt):
             x1, y1, x2, y2, score, class_id = detection
             if int(class_id) in vehicles and score > opt.vehicle_conf:  # Adjust confidence threshold as needed
                 vehicle_detections.append([x1, y1, x2, y2, score, class_id])
-                
-        # print(vehicle_detections)
+
         # Update tracker
         tracked_vehicles = vehicles_tracker.update(np.array(vehicle_detections))
-        # print(tracked_vehicles)
 
         for license_plate in license_plate_detections.boxes.data.tolist():
             x1, y1, x2, y2, score, class_id = license_plate
@@ -236,27 +230,39 @@ def detect_license(opt):
                 # Draw bounding boxes
                 draw_border(frame, (int(x1), int(y1)), (int(x2), int(y2)), color=(255, 0, 0))
                 draw_border(frame, (int(vx1), int(vy1)), (int(vx2), int(vy2)), color=(0, 255, 0))
-                
-                # crop Licnese plate untuk process deteksi string
+
+                # Crop License plate untuk process deteksi string
                 license_plate_crop = frame[int(y1):int(y2), int(x1): int(x2), :]
 
-                # Masukkan preprocess di sini
+                # Preprocessing
                 license_plate_crop_gray = cv2.cvtColor(license_plate_crop, cv2.COLOR_BGR2GRAY)
                 _, license_plate_crop_thresh = cv2.threshold(license_plate_crop_gray, 64, 255, cv2.THRESH_BINARY_INV)
 
-                # baca license plate number
+                # Baca license plate number
                 license_plate_text, license_plate_text_score = readLicensePlateString(license_plate_crop_thresh)
 
-                
-                # Save results
-                # baca license plate
+                # Jika text ditemukan, tampilkan di layar
                 if license_plate_text is not None:
+                    # Tampilkan teks di atas bounding box plat nomor
+                    text_position = (int(x1), int(y1) - 10)  # Posisi teks sedikit di atas bounding box
+                    cv2.putText(
+                        frame,
+                        license_plate_text,  # Teks plat nomor
+                        text_position,
+                        cv2.FONT_HERSHEY_SIMPLEX,  # Jenis font
+                        0.7,  # Ukuran font
+                        (0, 255, 0),  # Warna teks (hijau)
+                        2,  # Ketebalan garis teks
+                        cv2.LINE_AA  # Jenis garis
+                    )
+
+                    # Simpan hasil ke dictionary untuk logging atau CSV
                     results[frame_nmr][vehicle_id] = {'vehicle': {'bbox': [vx1, vy1, vx2, vy2], "type": vehicle_class},
-                                                  'license_plate': {'bbox': [x1, y1, x2, y2],
-                                                                    'text': license_plate_text,
-                                                                    'bbox_score': score,
-                                                                    'text_score': license_plate_text_score}}
-          
+                                                      'license_plate': {'bbox': [x1, y1, x2, y2],
+                                                                        'text': license_plate_text,
+                                                                        'bbox_score': score,
+                                                                        'text_score': license_plate_text_score}}
+
         # Write frame to video
         out.write(frame)
         frame_nmr += 1
@@ -269,11 +275,10 @@ def detect_license(opt):
 
 if __name__ == '__main__':
     opt = make_parser().parse_args()
+    t1 = perf_counter()
     result = detect_license(opt)
-
-    saveToCSV(result, './data.csv')
-
-    
-
-    
-
+    t2 = perf_counter()
+    print(f"Processing time: {t2 - t1} seconds")
+    print(f"Averaging {opt.frame_limit/(t2 - t1)} fps")
+    print(f"Result{result}")
+    saveToCSV(result, opt.output_data)
