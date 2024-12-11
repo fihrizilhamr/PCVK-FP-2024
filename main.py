@@ -256,12 +256,12 @@ def detect_license(opt):
                         cv2.LINE_AA  # Jenis garis
                     )
 
-                    # Simpan hasil ke dictionary untuk logging atau CSV
-                    results[frame_nmr][vehicle_id] = {'vehicle': {'bbox': [vx1, vy1, vx2, vy2], "type": vehicle_class},
-                                                      'license_plate': {'bbox': [x1, y1, x2, y2],
-                                                                        'text': license_plate_text,
-                                                                        'bbox_score': score,
-                                                                        'text_score': license_plate_text_score}}
+                # Simpan hasil ke dictionary untuk logging atau CSV
+                results[frame_nmr][vehicle_id] = {'vehicle': {'bbox': [vx1, vy1, vx2, vy2], "type": vehicle_class},
+                                                    'license_plate': {'bbox': [x1, y1, x2, y2],
+                                                                    'text': license_plate_text,
+                                                                    'bbox_score': score,
+                                                                    'text_score': license_plate_text_score}}
 
         # Write frame to video
         out.write(frame)
