@@ -9,6 +9,7 @@ import numpy as np
 import os
 import re
 
+from datetime import datetime
 
 
 from time import time, perf_counter
@@ -31,6 +32,20 @@ int_to_char = { '0': 'O',
                 '6': 'G',
                 '5': 'S'}
 
+def preprocess_image(image):
+    # Convert to grayscale
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    # Apply adaptive thresholding to enhance text
+    _, thresholded = cv2.threshold(gray, 64, 255, cv2.THRESH_BINARY_INV)
+
+    # save_path = f"preprocessed_image_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+
+    # if save_path:
+    #     cv2.imwrite(save_path, thresholded)
+
+    return thresholded
+
 
 def draw_border(img, top_left, bottom_right, color=(0, 255, 0), thickness=10):
     cv2.rectangle(img, top_left, bottom_right, color, thickness)
@@ -44,7 +59,7 @@ def make_parser():
     parser.add_argument('--roi-detect', type=str, default='./license_plate_detector.pt', help='roi detect model.pt path(s)')
     parser.add_argument('--vehicle-conf', type=float, default=0.0, help='vehicle detection confidence threshold')
     parser.add_argument('--roi-conf', type=float, default=0.0, help='roi detection confidence threshold')
-    parser.add_argument('--frame-limit', type=int, default=240, help='limit processed frames')
+    parser.add_argument('--frame-limit', type=int, default=1800, help='limit processed frames')
     parser.add_argument('--output', type=str, default='./output_sample.mp4', help='path to save output video')
     parser.add_argument('--output-data', type=str, default='./data.csv', help='path to save output data')
     return parser
@@ -102,7 +117,7 @@ def licenseFormatCheck(text):
     
     # Regex untuk format plat nomor: 1-2 huruf, diikuti 1-4 angka, diikuti 1-3 huruf
     pattern = r'^[A-Z]{1,2}\d{1,4}[A-Z]{1,3}$'
-    return bool(re.match(pattern, text))
+    return True
 
 
 def formatLicense(text):
@@ -122,7 +137,7 @@ def formatLicense(text):
 
 def readLicensePlateString(license_plate_crop_img):
     # membaca string plat nomor menggunakan OCR
-    reader = easyocr.Reader(['en'], gpu=False)
+    reader = easyocr.Reader(['en'], gpu=True)
     detections = reader.readtext(license_plate_crop_img)
 
     for detection in detections:
@@ -199,6 +214,9 @@ def detect_license(opt):
 
         results[frame_nmr] = {}
 
+        if frame_nmr >= 300:
+            break
+        
         # Detect vehicles
         detections = vehicle_detector(frame)[0]
 
@@ -235,11 +253,11 @@ def detect_license(opt):
                 license_plate_crop = frame[int(y1):int(y2), int(x1): int(x2), :]
 
                 # Preprocessing
-                license_plate_crop_gray = cv2.cvtColor(license_plate_crop, cv2.COLOR_BGR2GRAY)
-                _, license_plate_crop_thresh = cv2.threshold(license_plate_crop_gray, 64, 255, cv2.THRESH_BINARY_INV)
+                pre_prosessed_image = preprocess_image(license_plate_crop)
+               
 
                 # Baca license plate number
-                license_plate_text, license_plate_text_score = readLicensePlateString(license_plate_crop_thresh)
+                license_plate_text, license_plate_text_score = readLicensePlateString(pre_prosessed_image)
 
                 # Jika text ditemukan, tampilkan di layar
                 if license_plate_text is not None:
