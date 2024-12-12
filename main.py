@@ -58,7 +58,7 @@ def make_parser():
     parser.add_argument('--vehicle-detect', type=str, default='./yolov8n.pt', help='vehicle detect model.pt path(s)')
     parser.add_argument('--roi-detect', type=str, default='./license_plate_detector.pt', help='roi detect model.pt path(s)')
     parser.add_argument('--vehicle-conf', type=float, default=0.0, help='vehicle detection confidence threshold')
-    parser.add_argument('--roi-conf', type=float, default=0.0, help='roi detection confidence threshold')
+    parser.add_argument('--roi-conf', type=float, default=0.5, help='roi detection confidence threshold')
     parser.add_argument('--frame-limit', type=int, default=1800, help='limit processed frames')
     parser.add_argument('--output', type=str, default='./output_sample.mp4', help='path to save output video')
     parser.add_argument('--output-data', type=str, default='./data.csv', help='path to save output data')
@@ -112,11 +112,11 @@ def find_matching_detection(vehicles, tracked_bbox, vehicle_detections):
     return "unknown"
 
 def licenseFormatCheck(text):
-    if not (len(text) <= 9):
+    if not (len(text) >= 7 and len(text) <= 9):
         return False
     
     # Regex untuk format plat nomor: 1-2 huruf, diikuti 1-4 angka, diikuti 1-3 huruf
-    pattern = r'^[A-Z]{1,2}\d{1,4}[A-Z]{1,3}$'
+    # pattern = r'^[A-Z]{1,2}\d{1,4}[A-Z]{1,3}$'
     return True
 
 
@@ -151,34 +151,40 @@ def readLicensePlateString(license_plate_crop_img):
     return None, None
 
 def saveToCSV(results, output_path):
-    # save hasil ke format CSV untuk visulaisasi
+    # Save the results to a CSV format for visualization
     with open(output_path, 'w') as f:
-        f.write('{},{},{},{},{},{},{}\n'.format('frame', 'vehicle_id', 'car_bbox',
-                                                'license_plate_bbox', 'license_plate_bbox_score', 'license_number',
-                                                'license_number_score'))
+        f.write('{},{},{},{},{},{},{},{}\n'.format(
+            'frame', 'vehicle_id', 'vehicle_bbox', 'vehicle_type',
+            'license_plate_bbox', 'license_plate_bbox_score', 
+            'license_number', 'license_number_score'
+        ))
 
-        for frame_nmr in results.keys():
-            for vehicle_id in results[frame_nmr].keys():
-                # print(results[frame_nmr][vehicle_id])
-                if 'vehicle' in results[frame_nmr][vehicle_id].keys() and \
-                   'license_plate' in results[frame_nmr][vehicle_id].keys() and \
-                   'text' in results[frame_nmr][vehicle_id]['license_plate'].keys():
-                    f.write('{},{},{},{},{},{},{}\n'.format(frame_nmr,
-                                                            vehicle_id,
-                                                            '[{} {} {} {}]'.format(
-                                                                results[frame_nmr][vehicle_id]['vehicle']['bbox'][0],
-                                                                results[frame_nmr][vehicle_id]['vehicle']['bbox'][1],
-                                                                results[frame_nmr][vehicle_id]['vehicle']['bbox'][2],
-                                                                results[frame_nmr][vehicle_id]['vehicle']['bbox'][3]),
-                                                            '[{} {} {} {}]'.format(
-                                                                results[frame_nmr][vehicle_id]['license_plate']['bbox'][0],
-                                                                results[frame_nmr][vehicle_id]['license_plate']['bbox'][1],
-                                                                results[frame_nmr][vehicle_id]['license_plate']['bbox'][2],
-                                                                results[frame_nmr][vehicle_id]['license_plate']['bbox'][3]),
-                                                            results[frame_nmr][vehicle_id]['license_plate']['bbox_score'],
-                                                            results[frame_nmr][vehicle_id]['license_plate']['text'],
-                                                            results[frame_nmr][vehicle_id]['license_plate']['text_score'])
-                            )
+        for frame_nmr, vehicles in results.items():
+            for vehicle_id, vehicle_data in vehicles.items():
+                if 'vehicle' in vehicle_data and 'license_plate' in vehicle_data:
+                    vehicle = vehicle_data['vehicle']
+                    license_plate = vehicle_data['license_plate']
+
+                    # Extract the required fields
+                    vehicle_bbox = '[{} {} {} {}]'.format(
+                        vehicle['bbox'][0], vehicle['bbox'][1], 
+                        vehicle['bbox'][2], vehicle['bbox'][3]
+                    )
+                    vehicle_type = vehicle.get('type', 'unknown')
+
+                    lp_bbox = '[{} {} {} {}]'.format(
+                        license_plate['bbox'][0], license_plate['bbox'][1], 
+                        license_plate['bbox'][2], license_plate['bbox'][3]
+                    )
+                    lp_bbox_score = license_plate.get('bbox_score', 0.0)
+                    lp_text = license_plate.get('text', 'N/A')
+                    lp_text_score = license_plate.get('text_score', 0.0)
+
+                    # Write to CSV
+                    f.write('{},{},{},{},{},{},{},{}\n'.format(
+                        frame_nmr, vehicle_id, vehicle_bbox, vehicle_type,
+                        lp_bbox, lp_bbox_score, lp_text, lp_text_score
+                    ))
         f.close()
 
 
@@ -213,10 +219,6 @@ def detect_license(opt):
             break
 
         results[frame_nmr] = {}
-
-        if frame_nmr >= 300:
-            break
-        
         # Detect vehicles
         detections = vehicle_detector(frame)[0]
 
@@ -275,11 +277,11 @@ def detect_license(opt):
                     )
 
                 # Simpan hasil ke dictionary untuk logging atau CSV
-                results[frame_nmr][vehicle_id] = {'vehicle': {'bbox': [vx1, vy1, vx2, vy2], "type": vehicle_class},
-                                                    'license_plate': {'bbox': [x1, y1, x2, y2],
-                                                                    'text': license_plate_text,
-                                                                    'bbox_score': score,
-                                                                    'text_score': license_plate_text_score}}
+                    results[frame_nmr][vehicle_id] = {'vehicle': {'bbox': [vx1, vy1, vx2, vy2], "type": vehicle_class},
+                                                        'license_plate': {'bbox': [x1, y1, x2, y2],
+                                                                        'text': license_plate_text,
+                                                                        'bbox_score': score,
+                                                                        'text_score': license_plate_text_score}}
 
         # Write frame to video
         out.write(frame)
